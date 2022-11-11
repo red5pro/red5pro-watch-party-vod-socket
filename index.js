@@ -61,7 +61,8 @@ const InvokeKeys = {
     PLAY: 'play',
     TIME: 'time',
     SELECT: 'select',
-    CONTROL: 'control'
+    CONTROL: 'control',
+    RESPONSE: 'response'
 }
 
 const baseManifest = {
@@ -71,23 +72,103 @@ const baseManifest = {
     currentDriver: undefined
 }
 
+const REQUEST_INTERVAL = 2000
+
 let map = new Map() // token: manifest
-let wsMap = new Map() // token: [<websocket>]
+let wsMap = new Map() // token: [{userid, websocket}]
+let reqMap = new Map() // token: interval
+let playheadMap = new Map() // token: [{userid, number}]
+let driverMap = new Map() // token: userid
 
 const WebSocketServer = require('ws').Server
 const wss = new WebSocketServer({ server })
 console.log('Mock Socket Server running on ' + port + '.')
 
+const assignDriver = (token, userid) => {
+    driverMap.set(token, userid)
+    setUpInterval(token)
+    console.log(`${token} has a new driver: ${userid}.`)
+}
+
+const clearUpInterval = (token) => {
+    console.log('clearUpInterval')
+    if (reqMap.has(token)) {
+        console.log('CLEAR INTERVAL')
+        clearInterval(reqMap.get(token).interval)
+        reqMap.delete(token)
+    }
+}
+
+const setUpInterval = (token) => {
+    console.log('setupInterval')
+    clearUpInterval(token)
+    if (!reqMap.has(token)) {
+        console.log('SET INTERVAL')
+        const fn = playheadUpdate(token)
+        reqMap.set(token, {
+            interval: setInterval(fn, REQUEST_INTERVAL)
+        })
+        fn()
+    }
+}
+
+const playheadUpdate = token => {
+    return () => {
+        // if (wsMap.has(token)) {
+        //     wsMap.get(token).forEach(o =>{
+        //         const { ws } = o
+        //         ws.send(JSON.stringify({
+        //             'request': 'sampleTime'
+        //         }))
+        //     })
+        // }
+        if (wsMap.has(token) && driverMap.has(token)) {
+            const userid = driverMap.get(token)
+            const socket = wsMap.get(token).find(o => o.userid === userid)
+            if (socket) {
+                const { ws } = socket
+                console.log(`Go ask driver ${userid} for details in ${token}.`)
+                ws.send(JSON.stringify({
+                    'request': 'sampleTime'
+                })) 
+            }
+        }
+    }
+}
+
+const clearCurrentDriverIf = (token, userid) => {
+    const manifest = map.get(token)
+    const { currentDriver } = manifest
+    if (currentDriver && currentDriver.userid === userid) {
+        const m = {...manifest, currentDriver: undefined}
+        map.set(token, m)
+        update(token, m, userid)
+    }
+}
+
 const update = (token, manifest, fromid) => {
     const wsList = wsMap.get(token)
+    // console.log('UPDATE', token, manifest)
     wsList.forEach(obj => {
         const { userid, ws } = obj
         if (userid !== fromid) {
             ws.send(JSON.stringify({
-                'manifestUpdate': manifest
+                'manifestUpdate': manifest,
             }))
         }
     })
+}
+
+const smoothPlayheadTime = (manifest, playheads) => {
+    const current = manifest.currentTime
+    const len = playheads.length
+    const count = playheads.map(o => o.value).reduce((a, b) => a+b, 0)
+    const smoothed = count / len
+    if (Math.max(smoothed - current) > 1.5) {
+        manifest.currentTime = smoothed
+    }
+    console.log('SMOOTHED', playheads, current, smoothed)
+    return manifest
 }
 
 wss.on('connection', (ws, req) => {
@@ -105,24 +186,32 @@ wss.on('connection', (ws, req) => {
 
     const { token, userid } = params
     if (!wsMap.has(token)) {
+        console.log(`Create new socket map for ${token}.`)
         wsMap.set(token, [])
     }
     let list = wsMap.get(token)
-    list.push({ userid, ws })
-    wsMap.set(token, list)
 
     if (!map.has(token)) {
         console.log(`Create new manifest for ${token}.`)
         map.set(token, baseManifest)
     }
 
-    const manifest = map.get(token)
+    let manifest = map.get(token)
     console.log(`Manifest for ${token}:`, JSON.stringify(manifest))
 
     ws.send(JSON.stringify({
         'manifestUpdate': manifest
     }))
 
+    list.forEach(({ userid, ws }) => {
+        ws.send(JSON.stringify({
+            'request': 'sampleTime'
+        }))
+    })
+
+    list.push({ userid, ws })
+    wsMap.set(token, list)
+    
     ws.on('message', message => {
         let json = message
         if (typeof message === 'string') {
@@ -130,34 +219,76 @@ wss.on('connection', (ws, req) => {
         }
         console.log('Received: ', JSON.stringify(json, null, 2))
 
-        const { type, value, from } = json
-        switch (type) {
-            case InvokeKeys.PLAY:
-                manifest.isPlaying = value
-                return
-            case InvokeKeys.TIME:
-                manifest.currentTime = value
-                return
-            case InvokeKeys.SELECT:
-                manifest.selectedItem = value
-                return
-            case InvokeKeys.CONTROL:
-                manifest.currentDriver = value
-                return
-            default:
-                console.log(`Unhandled manifest change for ${type}`)
+        const { type, value, atTime, from } = json
+        if (atTime) {
+            manifest.currentTime = atTime
         }
-        map.set(params.token, manifest)
-        update(params.token, manifest, from)
+        if (type === InvokeKeys.PLAY) {
+            manifest.isPlaying = value
+            assignDriver(token, userid)
+        } else if (type === InvokeKeys.TIME) {
+            manifest.currentTime = value
+            assignDriver(token, userid)
+        } else if (type === InvokeKeys.SELECT) {
+            manifest.selectedItem = value
+            assignDriver(token, userid)
+        } else if (type === InvokeKeys.CONTROL) {
+            manifest.currentDriver = value
+            if (value) {
+                assignDriver(token, userid)
+            }
+        } else if (type === InvokeKeys.RESPONSE) {
+            const { request, response } = json
+            if (request === 'sampleTime') {
+                console.log('RESPONSE', from, response)
+                // const playheads = playheadMap.has(token) ? playheadMap.get(token) : []
+                // let index = playheads.findIndex(p => p.userid === userid)
+                // index = index === -1 ? playheads.length : index
+                // playheads[index] = {userid, value: response}
+                // playheadMap.set(token, playheads)
+                // if (wsMap.get(token).length === 1) {
+                //     return
+                // }
+                // manifest = smoothPlayheadTime(manifest, playheads)
+                manifest.currentTime = response
+            }
+        } else {
+            console.log(`Unhandled manifest change for ${type}`)
+        }
+        map.set(token, manifest)
+        update(token, manifest, from)
     })
 
     ws.on('close', () => {
         console.log('websocket connection close')
+        clearCurrentDriverIf(token, userid)
         const m = wsMap.get(token)
-        const i = m.findIndex(obj => obj.userid = userid)
+        const p = playheadMap.get(token)
+        const u = driverMap.get(token)
+        const driverLeaving = u === userid
+        let i = m.findIndex(obj => obj.userid === userid)
         if (i > -1) {
             m.splice(i, 1)
             wsMap.set(token, m)
+            if (m.length === 0) {
+                clearUpInterval(token)
+            }
+        }
+        if (p) {
+            i = p.findIndex(obj => obj.userid === userid)
+            if (i > -1) {
+                p.splice(i, 1)
+                playheadMap.set(token, p)
+            }
+        }
+        // If the connection leaving was the driver,
+        // see if we can transfer ownership...
+        if (driverLeaving) {
+            console.log(`Driver ${userid} is leaving ${token}.`)
+            driverMap.delete(token)
+            if (m.length > 0) {
+                assignDriver(token, m[0].userid)
+            }
         }
     })
 })
