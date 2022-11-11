@@ -127,7 +127,7 @@ const playheadUpdate = token => {
             const socket = wsMap.get(token).find(o => o.userid === userid)
             if (socket) {
                 const { ws } = socket
-                console.log(`Go ask driver ${userid} for details in ${token}.`)
+                // console.log(`Go ask driver ${userid} for details in ${token}.`)
                 ws.send(JSON.stringify({
                     'request': 'sampleTime'
                 })) 
@@ -154,6 +154,18 @@ const update = (token, manifest, fromid) => {
         if (userid !== fromid) {
             ws.send(JSON.stringify({
                 'manifestUpdate': manifest,
+            }))
+        }
+    })
+}
+
+const updateDriver = (token, driver, fromid) => {
+    const wsList = wsMap.get(token)
+    wsList.forEach(obj => {
+        const { userid, ws } = obj
+        if (userid !== fromid) {
+            ws.send(JSON.stringify({
+                'driverUpdate': driver,
             }))
         }
     })
@@ -188,6 +200,7 @@ wss.on('connection', (ws, req) => {
     if (!wsMap.has(token)) {
         console.log(`Create new socket map for ${token}.`)
         wsMap.set(token, [])
+        assignDriver(token, userid)
     }
     let list = wsMap.get(token)
 
@@ -218,29 +231,38 @@ wss.on('connection', (ws, req) => {
           json = JSON.parse(message)
         }
         console.log('Received: ', JSON.stringify(json, null, 2))
-
+        const isCurrentDriver = driverMap.has(token) ? driverMap.get(token) !== userid : false
         const { type, value, atTime, from } = json
         if (atTime) {
             manifest.currentTime = atTime
         }
         if (type === InvokeKeys.PLAY) {
             manifest.isPlaying = value
-            assignDriver(token, userid)
+            if (!isCurrentDriver) {
+                assignDriver(token, userid)
+            }
         } else if (type === InvokeKeys.TIME) {
             manifest.currentTime = value
-            assignDriver(token, userid)
+            if (!isCurrentDriver) {
+                assignDriver(token, userid)
+            }
         } else if (type === InvokeKeys.SELECT) {
             manifest.selectedItem = value
-            assignDriver(token, userid)
+            if (!isCurrentDriver) {
+                assignDriver(token, userid)
+            }
         } else if (type === InvokeKeys.CONTROL) {
             manifest.currentDriver = value
-            if (value) {
+            if (value && !isCurrentDriver) {
                 assignDriver(token, userid)
+                updateDriver(token, value, from)
+            } else if (!value) {
+                updateDriver(token, undefined, from)
             }
         } else if (type === InvokeKeys.RESPONSE) {
             const { request, response } = json
             if (request === 'sampleTime') {
-                console.log('RESPONSE', from, response)
+                // console.log('RESPONSE', from, response)
                 // const playheads = playheadMap.has(token) ? playheadMap.get(token) : []
                 // let index = playheads.findIndex(p => p.userid === userid)
                 // index = index === -1 ? playheads.length : index
@@ -272,6 +294,7 @@ wss.on('connection', (ws, req) => {
             wsMap.set(token, m)
             if (m.length === 0) {
                 clearUpInterval(token)
+                wsMap.delete(token)
             }
         }
         if (p) {
