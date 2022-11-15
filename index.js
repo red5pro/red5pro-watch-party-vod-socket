@@ -71,10 +71,12 @@ const baseManifest = {
     currentTime: 0,
     isPlaying: false,
     selectedItem: undefined,
-    currentDriver: undefined
+    currentDriver: undefined,
+    controller: undefined,
 }
 
 const REQUEST_INTERVAL = 2000
+let driverActive = false
 
 let map = new Map() // token: manifest
 let wsMap = new Map() // token: [{userid, websocket}]
@@ -127,7 +129,7 @@ const playheadUpdate = token => {
         if (wsMap.has(token) && driverMap.has(token)) {
             const userid = driverMap.get(token)
             const socket = wsMap.get(token).find(o => o.userid === userid)
-            if (socket) {
+            if (socket && !driverActive) {
                 const { ws } = socket
                 // console.log(`Go ask driver ${userid} for details in ${token}.`)
                 ws.send(JSON.stringify({
@@ -233,7 +235,7 @@ wss.on('connection', (ws, req) => {
           json = JSON.parse(message)
         }
         console.log('Received: ', JSON.stringify(json, null, 2))
-        const isCurrentDriver = driverMap.has(token) ? driverMap.get(token) !== userid : false
+        const isCurrentDriver = driverMap.has(token) ? driverMap.get(token) === userid : false
         const { type, value, atTime, from } = json
         if (atTime) {
             manifest.currentTime = atTime
@@ -242,28 +244,35 @@ wss.on('connection', (ws, req) => {
             manifest.isPlaying = value
             if (!isCurrentDriver) {
                 assignDriver(token, userid)
+                manifest.controller = userid
             }
         } else if (type === InvokeKeys.TIME) {
             manifest.currentTime = value
             if (!isCurrentDriver) {
                 assignDriver(token, userid)
+                manifest.controller = userid
             }
         } else if (type === InvokeKeys.SELECT) {
             manifest.selectedItem = value
             if (!isCurrentDriver) {
                 assignDriver(token, userid)
+                manifest.controller = userid
             }
         } else if (type === InvokeKeys.CONTROL) {
             manifest.currentDriver = value
-            if (value && !isCurrentDriver) {
+            if (value && !driverActive) {
                 assignDriver(token, userid)
+                driverActive = true
                 updateDriver(token, value, from)
+                manifest.controller = userid
             } else if (!value) {
+                driverActive = false
                 updateDriver(token, undefined, from)
+                playheadUpdate()
             }
         } else if (type === InvokeKeys.RESPONSE) {
             const { request, response } = json
-            if (request === 'sampleTime') {
+            if (request === 'sampleTime' && isCurrentDriver) {
                 // console.log('RESPONSE', from, response)
                 // const playheads = playheadMap.has(token) ? playheadMap.get(token) : []
                 // let index = playheads.findIndex(p => p.userid === userid)
