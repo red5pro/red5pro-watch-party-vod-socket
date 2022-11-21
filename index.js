@@ -249,10 +249,9 @@ wss.on('connection', (ws, req) => {
         if (typeof message === 'string') {
           json = JSON.parse(message)
         }
-        // console.log('Received: ', JSON.stringify(json, null, 2))
+        console.log('Received: ', JSON.stringify(json, null, 2))
         const isCurrentDriver = driverMap.has(token) ? driverMap.get(token) === userid : false
-        const { type, value, atTime, from, ping } = json
-        if (ping) { return }
+        const { type, value, atTime, from } = json
         if (atTime) {
             manifest.currentTime = atTime
         }
