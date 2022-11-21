@@ -90,7 +90,6 @@ console.log('Mock Socket Server running on ' + port + '.')
 
 const assignDriver = (token, userid) => {
     driverMap.set(token, userid)
-    setUpInterval(token)
     console.log(`${token} has a new driver: ${userid}.`)
 }
 
@@ -163,13 +162,16 @@ const update = (token, manifest, fromid) => {
     })
 }
 
-const updateDriver = (token, driver, fromid) => {
+const updateDriver = (token, driver, selection, fromid) => {
     const wsList = wsMap.get(token)
     wsList.forEach(obj => {
         const { userid, ws } = obj
         if (userid !== fromid) {
             ws.send(JSON.stringify({
-                'driverUpdate': driver,
+                'driverUpdate': {
+                    driver,
+                    selection 
+                }
             }))
         }
     })
@@ -246,6 +248,11 @@ wss.on('connection', (ws, req) => {
                 assignDriver(token, userid)
                 manifest.controller = userid
             }
+            if (value) {
+                setUpInterval(token)
+            } else {
+                clearUpInterval(token)
+            }
         } else if (type === InvokeKeys.TIME) {
             manifest.currentTime = value
             if (!isCurrentDriver) {
@@ -263,11 +270,11 @@ wss.on('connection', (ws, req) => {
             if (value && !driverActive) {
                 assignDriver(token, userid)
                 driverActive = true
-                updateDriver(token, value, from)
+                updateDriver(token, value, manifest.selectedItem, from)
                 manifest.controller = userid
             } else if (!value) {
                 driverActive = false
-                updateDriver(token, undefined, from)
+                updateDriver(token, undefined, manifest.selctedItem, from)
                 playheadUpdate()
             }
         } else if (type === InvokeKeys.RESPONSE) {
