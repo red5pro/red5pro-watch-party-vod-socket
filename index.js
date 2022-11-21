@@ -189,6 +189,14 @@ const smoothPlayheadTime = (manifest, playheads) => {
     return manifest
 }
 
+const interval = setInterval(function ping() {
+    wss.clients.forEach(function each(ws) {
+      if (ws.isAlive === false) return ws.terminate()
+      ws.isAlive = false;
+      ws.ping()
+    })
+  }, 30000)
+
 wss.on('connection', (ws, req) => {
 
     console.log('websocket connection open')
@@ -198,6 +206,11 @@ wss.on('connection', (ws, req) => {
         ws.close()
         return
     }
+
+    ws.isAlive = true
+    ws.on('pong', () => {
+        ws.isAlive = true
+    })
 
     const params = getParams(query)
     console.log(params)
@@ -236,9 +249,10 @@ wss.on('connection', (ws, req) => {
         if (typeof message === 'string') {
           json = JSON.parse(message)
         }
-        console.log('Received: ', JSON.stringify(json, null, 2))
+        // console.log('Received: ', JSON.stringify(json, null, 2))
         const isCurrentDriver = driverMap.has(token) ? driverMap.get(token) === userid : false
-        const { type, value, atTime, from } = json
+        const { type, value, atTime, from, ping } = json
+        if (ping) { return }
         if (atTime) {
             manifest.currentTime = atTime
         }
@@ -293,7 +307,7 @@ wss.on('connection', (ws, req) => {
                 manifest.currentTime = response
             }
         } else {
-            console.log(`Unhandled manifest change for ${type}`)
+            console.log(`Unhandled manifest change for ${message}`)
         }
         map.set(token, manifest)
         update(token, manifest, from)
@@ -332,4 +346,8 @@ wss.on('connection', (ws, req) => {
             }
         }
     })
+})
+
+wss.on('close', function close() {
+    clearInterval(interval)
 })
