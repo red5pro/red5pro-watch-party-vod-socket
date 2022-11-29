@@ -20,3 +20,7 @@ npm install
 npm install -g forever
 export SSL=true; forever start index.js
 ```
+
+# More Info
+
+The open source example that integrates with this server for VOD Playback Orchestration can be found at: [https://github.com/red5pro/red5pro-watch-party/tree/feature/vod_scrub_sync_RED5DEV-543](https://github.com/red5pro/red5pro-watch-party/tree/feature/vod_scrub_sync_RED5DEV-543).

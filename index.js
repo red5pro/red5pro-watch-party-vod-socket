@@ -13,11 +13,9 @@ let cert
 let key
 
 if (useSSL) {
-//   console.log('Using SSL.')
-//   cert = fs.readFileSync('./cert/certificate.crt')
-//   key = fs.readFileSync('./cert/privateKey.key')
-    cert = fs.readFileSync('/etc/letsencrypt/live/wildcard_cert_red5pro.net/fullchain.pem')
-    key = fs.readFileSync('/etc/letsencrypt/live/wildcard_cert_red5pro.net/privkey.pem')
+    console.log('Using SSL.')
+    cert = fs.readFileSync('./cert/certificate.crt')
+    key = fs.readFileSync('./cert/privateKey.key')
     port = 443
 }
 
